@@ -1,7 +1,28 @@
 import mongoose from "mongoose";
-import dns from "dns/promises";
+import dns from "dns";
 
 let databaseReady = false;
+
+const resolveAtlasHost = async (hostname) => {
+    const record = `_mongodb._tcp.${hostname}`;
+    const resolveWithTimeout = () => Promise.race([
+        dns.promises.resolveSrv(record),
+        new Promise((resolve, reject) => setTimeout(() => reject(new Error("DNS lookup timed out")), 3000)),
+    ]);
+
+    try {
+        await resolveWithTimeout();
+    } catch (systemDnsError) {
+        // Some routers and mobile hotspots don't support the SRV lookups Atlas uses.
+        // Public resolvers provide a reliable fallback and are also used by the driver.
+        dns.setServers(["1.1.1.1", "8.8.8.8"]);
+        try {
+            await resolveWithTimeout();
+        } catch (publicDnsError) {
+            throw new Error(`Unable to resolve MongoDB Atlas host '${hostname}': ${publicDnsError.message}`);
+        }
+    }
+};
 
 export const connectDB = async () => {
     let mongoUri = process.env.MONGODB_URI;
@@ -16,14 +37,7 @@ export const connectDB = async () => {
 
     if (mongoUri.startsWith("mongodb+srv://")) {
         const hostname = new URL(mongoUri.replace("mongodb+srv://", "http://")).hostname;
-        try {
-            await Promise.race([
-                dns.resolveSrv(`_mongodb._tcp.${hostname}`),
-                new Promise((resolve, reject) => setTimeout(() => reject(new Error("DNS lookup timed out")), 3000)),
-            ]);
-        } catch {
-            throw new Error(`MongoDB Atlas host '${hostname}' does not exist. Update MONGODB_URI in .env with the current Atlas connection string.`);
-        }
+        await resolveAtlasHost(hostname);
     }
 
     await mongoose.connect(mongoUri, {
