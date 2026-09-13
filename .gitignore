@@ -5,3 +5,4 @@ uploads/*
 !uploads/.gitkeep
 npm-debug.log*
 data/local-db.json
+.tmp/

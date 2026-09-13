@@ -10,6 +10,7 @@
     "test": "node --test --test-concurrency=1",
     "test:mongo": "node --test --test-concurrency=1 test/mongo.test.js",
     "make-admin": "node scripts/makeAdmin.js",
+    "db:audit": "node scripts/auditDatabase.js",
     "seed": "node scripts/seedFoods.js"
   },
   "author": "",

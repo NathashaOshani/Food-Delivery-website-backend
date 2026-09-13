@@ -56,7 +56,28 @@ Interactive Swagger documentation is available at `http://localhost:4000/api-doc
 
 Send authenticated requests with `Authorization: Bearer <token>`. The legacy `token` header is also accepted.
 
-## Endpoints
+## Database collections
+
+MongoDB stores this application's data in five collections:
+
+| Collection | Features stored |
+|---|---|
+| `users` | Login, admin roles, email verification, password reset tokens, profile, cart, saved addresses, favorites |
+| `foods` | Catalog, categories, prices, image filenames, availability, inventory, rating summaries |
+| `orders` | Order items, delivery address snapshot, totals, status, payments, refunds, coupon snapshot, notification history |
+| `coupons` | Discount rules, validity dates, usage limits, redemptions |
+| `reviews` | Customer ratings, comments, purchase references, moderation |
+
+Run `npm run db:audit` to check the database selected by `MONGODB_URI`.
+The read-only audit checks collection existence, schema-defined indexes, and
+existing documents against Mongoose validation (including model defaults and
+casting). It prints counts and invalid field names, never account values, and
+exits nonzero when it finds issues. It does not check reference integrity,
+external services, or every application-level business rule.
+Empty coupons or reviews collections are normal until those features are used.
+Email and Stripe delivery still require their environment configuration.
+
+## API endpoints
 
 | Method | Endpoint | Authentication | Purpose |
 |---|---|---|---|
