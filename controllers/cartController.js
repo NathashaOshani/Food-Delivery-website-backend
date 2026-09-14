@@ -10,7 +10,9 @@ const cartObject = (cartData) => Object.fromEntries(cartData);
 const validItemId = (itemId) => typeof itemId === "string" && mongoose.isValidObjectId(itemId);
 
 const addToCart = async (req, res) => {
-    if (!hasOnlyFields(req.body, ["itemId"])) return res.status(400).json({ success: false, message: "Only itemId is allowed" });
+    if (!hasOnlyFields(req.body, ["itemId", "quantity"])) return res.status(400).json({ success: false, message: "Only itemId and quantity are allowed" });
+    const requestedQuantity = req.body.quantity === undefined ? 1 : req.body.quantity;
+    if (!Number.isInteger(requestedQuantity) || requestedQuantity < 1 || requestedQuantity > maxQuantity) return res.status(400).json({ success: false, message: `Quantity must be an integer between 1 and ${maxQuantity}` });
     const { itemId } = req.body;
     if (!validItemId(itemId)) return res.status(400).json({ success: false, message: "A valid food id is required" });
     const food = await foodModel.findById(itemId);
@@ -19,9 +21,9 @@ const addToCart = async (req, res) => {
     const user = await getUser(req.userId);
     if (!user) return res.status(401).json({ success: false, message: "User not found" });
     const quantity = user.cartData.get(itemId) || 0;
-    if (quantity >= maxQuantity) return res.status(400).json({ success: false, message: `Maximum quantity is ${maxQuantity}` });
-    if (food.stock !== null && food.stock !== undefined && quantity >= food.stock) return res.status(409).json({ success: false, message: `Only ${food.stock} are available` });
-    user.cartData.set(itemId, quantity + 1);
+    if (quantity + requestedQuantity > maxQuantity) return res.status(400).json({ success: false, message: `Maximum quantity is ${maxQuantity}` });
+    if (food.stock !== null && food.stock !== undefined && quantity + requestedQuantity > food.stock) return res.status(409).json({ success: false, message: `Only ${food.stock} are available` });
+    user.cartData.set(itemId, quantity + requestedQuantity);
     await user.save();
     res.json({ success: true, message: "Added to cart", cartData: cartObject(user.cartData) });
 };

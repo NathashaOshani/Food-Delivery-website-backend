@@ -11,6 +11,7 @@ import userRouter from "./routes/userRoute.js";
 import cartRouter from "./routes/cartRoute.js";
 import orderRouter from "./routes/orderRoute.js";
 import couponRouter from "./routes/couponRoute.js";
+import categoryRouter from "./routes/categoryRoute.js";
 import { cleanupAbandonedOrders, stripeWebhook } from "./controllers/orderController.js";
 import openapiSpecification from "./config/openapi.js";
 import { validateEnvironment } from "./config/env.js";
@@ -44,6 +45,7 @@ app.use("/api/user", userRouter);
 app.use("/api/cart", cartRouter);
 app.use("/api/order", orderRouter);
 app.use("/api/coupon", couponRouter);
+app.use("/api/category", categoryRouter);
 app.get("/", (req, res) => res.json({ success: true, message: "API working", documentation: "/api-docs" }));
 app.use("/api", (req, res) => res.status(404).json({ success: false, message: "API endpoint not found" }));
 
@@ -69,3 +71,4 @@ try {
 }
 
 export default app;
+

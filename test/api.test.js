@@ -120,9 +120,29 @@ test("complete customer and administrator API flow", async () => {
   assert.equal(result.response.status, 403);
 
   const databaseFile = path.join(testDirectory, "data", "local-db.json");
+  result = await request("/api/category/add", { method: "POST", body: { name: "Pizza" } });
+  assert.equal(result.response.status, 401);
+  result = await request("/api/category/add", { method: "POST", token, body: { name: "Pizza" } });
+  assert.equal(result.response.status, 403);
   const database = JSON.parse(await fs.readFile(databaseFile, "utf8"));
   database.users.find((user) => user._id === userId).role = "admin";
   await fs.writeFile(databaseFile, JSON.stringify(database, null, 2));
+
+  result = await request("/api/category/add", { method: "POST", token, body: { name: " Pizza " } });
+  assert.equal(result.response.status, 201);
+  assert.equal(result.data.data.name, "Pizza");
+  for (const name of ["pizza", "PASTA", "All"]) {
+    result = await request("/api/category/add", { method: "POST", token, body: { name } });
+    assert.equal(result.response.status, 409);
+  }
+  for (const name of [" ", "x".repeat(51), 123]) {
+    result = await request("/api/category/add", { method: "POST", token, body: { name } });
+    assert.equal(result.response.status, 400);
+  }
+  result = await request("/api/category/list");
+  assert.ok(result.data.data.some(({ name }) => name === "Pizza"));
+  assert.ok(result.data.data.some(({ name }) => name === "Pasta"));
+  assert.equal(JSON.parse(await fs.readFile(databaseFile, "utf8")).categories[0].name, "Pizza");
 
   const invalidImageForm = new FormData();
   invalidImageForm.append("name", "Invalid image"); invalidImageForm.append("description", "Not really an image");
@@ -135,13 +155,16 @@ test("complete customer and administrator API flow", async () => {
   form.append("name", "Integration Pizza");
   form.append("description", "A test menu item");
   form.append("price", "12.50");
-  form.append("category", "Pasta");
+  form.append("category", "pizza");
   form.append("stock", "3");
   form.append("isAvailable", "true");
   form.append("image", new Blob([new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10])], { type: "image/png" }), "pizza.png");
   result = await request("/api/food/add", { method: "POST", token, body: form });
   assert.equal(result.response.status, 201);
   const foodId = result.data.data._id;
+  assert.equal(result.data.data.category, "Pizza");
+  result = await request("/api/food/list?category=Pizza");
+  assert.equal(result.data.data[0]._id, foodId);
 
   result = await request(`/api/user/favorites/${foodId}`, { method: "POST", token });
   assert.equal(result.response.status, 200);
@@ -189,7 +212,15 @@ test("complete customer and administrator API flow", async () => {
   result = await request("/api/food/list?unexpected=true");
   assert.equal(result.response.status, 400);
 
-  result = await request("/api/cart/add", { method: "POST", token, body: { itemId: foodId } });
+  for (const quantity of [0, -1, 1.5, 100, "2", null]) {
+    result = await request("/api/cart/add", { method: "POST", token, body: { itemId: foodId, quantity } });
+    assert.equal(result.response.status, 400);
+  }
+  result = await request("/api/cart/add", { method: "POST", token, body: { itemId: foodId, quantity: 2 } });
+  assert.equal(result.data.cartData[foodId], 2);
+  result = await request("/api/cart/add", { method: "POST", token, body: { itemId: foodId, quantity: 2 } });
+  assert.equal(result.response.status, 409);
+  result = await request("/api/cart/remove", { method: "POST", token, body: { itemId: foodId } });
   assert.equal(result.data.cartData[foodId], 1);
   result = await request("/api/cart/add", { method: "POST", token, body: { itemId: foodId } });
   assert.equal(result.data.cartData[foodId], 2);

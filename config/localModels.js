@@ -4,7 +4,7 @@ import path from "path";
 
 const dataDirectory = path.resolve("data");
 const dataFile = path.join(dataDirectory, "local-db.json");
-const emptyDatabase = { foods: [], users: [], orders: [], coupons: [], reviews: [] };
+const emptyDatabase = { foods: [], users: [], orders: [], coupons: [], reviews: [], categories: [] };
 
 const readDatabase = () => {
     try { const database = JSON.parse(fs.readFileSync(dataFile, "utf8")); return { ...structuredClone(emptyDatabase), ...database }; }
@@ -64,6 +64,19 @@ const hydrateOrder = (item) => item && saveDocument("orders", { ...item });
 const hydrateFood = (item) => item && saveDocument("foods", { ...item });
 const hydrateCoupon = (item) => item && saveDocument("coupons", { ...item });
 const hydrateReview = (item) => item && saveDocument("reviews", { ...item });
+
+export const categoryModel = {
+    find: (query = {}) => new Query(async () => readDatabase().categories.filter((item) => matches(item, query))),
+    findOne: (query) => new Query(async () => readDatabase().categories.find((item) => matches(item, query))),
+    create: async (values) => {
+        const database = readDatabase();
+        if (database.categories.some((item) => item.key === values.key)) {
+            const error = new Error("Category already exists"); error.code = 11000; throw error;
+        }
+        const category = { ...values, _id: id(), createdAt: new Date().toISOString() };
+        database.categories.push(category); writeDatabase(database); return category;
+    },
+};
 
 export const foodModel = {
     create: async (values) => {

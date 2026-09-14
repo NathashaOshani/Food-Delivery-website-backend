@@ -4,6 +4,7 @@ import mongoose from "mongoose";
 import foodModel from "../models/foodmodel.js";
 import reviewModel from "../models/reviewModel.js";
 import userModel from "../models/userModel.js";
+import categoryModel from "../models/categoryModel.js";
 import { canonicalCategory, hasOnlyFields } from "../config/validation.js";
 
 const deleteImage = async (filename) => {
@@ -27,11 +28,12 @@ const validImageSignature = async (file) => {
     } finally { await handle.close(); }
 };
 
-const validateFoodFields = (body, current = {}) => {
+const validateFoodFields = async (body, current = {}) => {
     if (!hasOnlyFields(body, ["name", "description", "price", "category", "isAvailable", "stock"])) return { error: "Unknown food field" };
     const name = typeof body.name === "string" ? body.name.trim() : "";
     const description = typeof body.description === "string" ? body.description.trim() : "";
-    const category = canonicalCategory(body.category);
+    const categoryInput = typeof body.category === "string" ? body.category.trim().replace(/\s+/g, " ") : "";
+    const category = canonicalCategory(categoryInput) || (categoryInput.length <= 50 && (await categoryModel.findOne({ key: categoryInput.toLowerCase() }))?.name);
     const price = typeof body.price === "string" || typeof body.price === "number" ? Number(body.price) : NaN;
     const isAvailable = body.isAvailable === undefined ? (current.isAvailable ?? true) : body.isAvailable === true || body.isAvailable === "true" ? true : body.isAvailable === false || body.isAvailable === "false" ? false : null;
     const stock = body.stock === undefined ? (current.stock ?? null) : body.stock === "" || body.stock === null ? null : Number(body.stock);
@@ -52,7 +54,7 @@ const addFood = async (req, res) => {
             await deleteImage(req.file.filename);
             return res.status(400).json({ success: false, message: "Uploaded file content is not a valid image" });
         }
-        const fields = validateFoodFields(req.body);
+        const fields = await validateFoodFields(req.body);
         if (fields.error) {
             await deleteImage(req.file.filename);
             return res.status(400).json({ success: false, message: fields.error });
@@ -82,7 +84,7 @@ const updateFood = async (req, res) => {
             return res.status(404).json({ success: false, message: "Food not found" });
         }
 
-        const fields = validateFoodFields(req.body, food);
+        const fields = await validateFoodFields(req.body, food);
         if (fields.error) {
             if (req.file) await deleteImage(req.file.filename);
             return res.status(400).json({ success: false, message: fields.error });

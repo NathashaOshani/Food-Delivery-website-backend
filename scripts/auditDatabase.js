@@ -10,7 +10,7 @@ try {
     if (process.env.DB_MODE === "local") throw new Error("Database audit requires MongoDB; DB_MODE is local");
     const models = await Promise.all([
         "../models/userModel.js", "../models/foodmodel.js", "../models/orderModel.js",
-        "../models/couponModel.js", "../models/reviewModel.js",
+        "../models/couponModel.js", "../models/reviewModel.js", "../models/categoryModel.js",
     ].map(async (file) => (await import(file)).default));
     await connectDB();
     const existing = new Set((await mongoose.connection.db.listCollections({}, { nameOnly: true }).toArray()).map(({ name }) => name));

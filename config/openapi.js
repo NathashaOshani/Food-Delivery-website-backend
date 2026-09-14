@@ -49,6 +49,14 @@ const openapiSpecification = {
         },
     },
     paths: {
+        "/api/category/list": {
+            get: { tags: ["Food"], summary: "List built-in and admin-created menu categories", responses: { 200: response("Category names") } },
+        },
+        "/api/category/add": {
+            post: { tags: ["Admin"], summary: "Add a menu category", security: bearer,
+                requestBody: jsonBody({ type: "object", required: ["name"], additionalProperties: false, properties: { name: { type: "string", minLength: 2, maxLength: 50 } } }),
+                responses: { 201: response("Category added"), 400: response("Invalid name"), 401: response("Authentication required"), 403: response("Admin required"), 409: response("Duplicate or reserved name") } },
+        },
         "/health/live": { get: { summary: "Liveness check", responses: { 200: response("Process is running") } } },
         "/health/ready": { get: { summary: "Readiness check", responses: { 200: response("Database is connected"), 503: response("Database is unavailable") } } },
         "/api/food/list": {
@@ -133,7 +141,7 @@ const openapiSpecification = {
             delete: { tags: ["Favorites"], summary: "Remove a food from favorites", security: bearer, parameters: [{ name: "foodId", in: "path", required: true, schema: { type: "string" } }], responses: { 200: response("Favorite removed or already absent") } },
         },
         "/api/cart/add": {
-            post: { tags: ["Cart"], summary: "Increment a cart item", security: bearer, requestBody: jsonBody({ $ref: "#/components/schemas/ItemId" }), responses: { 200: response("Updated cart") } },
+            post: { tags: ["Cart"], summary: "Add a quantity of a food to the cart", security: bearer, requestBody: jsonBody({ type: "object", required: ["itemId"], additionalProperties: false, properties: { itemId: { type: "string" }, quantity: { type: "integer", minimum: 1, maximum: 99, default: 1 } } }), responses: { 200: response("Updated cart"), 400: response("Invalid quantity or cart limit exceeded"), 409: response("Insufficient stock") } },
         },
         "/api/cart/remove": {
             post: { tags: ["Cart"], summary: "Decrement a cart item", security: bearer, requestBody: jsonBody({ $ref: "#/components/schemas/ItemId" }), responses: { 200: response("Updated cart") } },

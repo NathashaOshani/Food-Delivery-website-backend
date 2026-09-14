@@ -58,7 +58,7 @@ Send authenticated requests with `Authorization: Bearer <token>`. The legacy `to
 
 ## Database collections
 
-MongoDB stores this application's data in five collections:
+MongoDB stores this application's data in six collections:
 
 | Collection | Features stored |
 |---|---|
@@ -67,6 +67,14 @@ MongoDB stores this application's data in five collections:
 | `orders` | Order items, delivery address snapshot, totals, status, payments, refunds, coupon snapshot, notification history |
 | `coupons` | Discount rules, validity dates, usage limits, redemptions |
 | `reviews` | Customer ratings, comments, purchase references, moderation |
+| `categories` | Admin-created menu category names; the original eight categories remain built in |
+
+Admins can add categories from **Admin Dashboard → Menu categories**. Names must
+be 2–50 characters and unique without regard to case; `All` is reserved for filtering.
+New categories appear in the food dropdown and customer menu, even before foods
+are added. Their first food image is used as the menu thumbnail when available.
+The public `GET /api/category/list` endpoint lists categories; admin-only
+`POST /api/category/add` accepts JSON such as `{ "name": "Pizza" }`.
 
 Run `npm run db:audit` to check the database selected by `MONGODB_URI`.
 The read-only audit checks collection existence, schema-defined indexes, and
