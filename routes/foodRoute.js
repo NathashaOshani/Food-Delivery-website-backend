@@ -1,13 +1,17 @@
 import crypto from "crypto";
 import express from "express";
 import multer from "multer";
+import fs from "node:fs";
 import { addFood, listFood, removeFood, updateFood } from "../controllers/foodController.js";
 import authMiddleware, { requireAdmin } from "../middleware/auth.js";
 import { createReview, deleteReview, listFoodReviews, moderateReview, updateReview } from "../controllers/reviewController.js";
+import { myFoodReview, listAdminFoodReviews } from "../controllers/reviewController.js";
 
 const foodRouter = express.Router();
 const storage = multer.diskStorage({
-    destination: "./uploads/",
+    destination: (req, file, callback) => {
+        fs.mkdir("./uploads", { recursive: true }, (error) => callback(error, "./uploads/"));
+    },
     filename: (req, file, cb) => {
         const extensions = { "image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp" };
         cb(null, `${Date.now()}-${crypto.randomUUID()}${extensions[file.mimetype] || ""}`);
@@ -25,6 +29,8 @@ const upload = multer({
 
 foodRouter.get("/list", listFood);
 foodRouter.get("/:id/reviews", listFoodReviews);
+foodRouter.get("/:id/reviews/mine", authMiddleware, myFoodReview);
+foodRouter.get("/:id/reviews/admin", authMiddleware, requireAdmin, listAdminFoodReviews);
 foodRouter.post("/:id/reviews", authMiddleware, createReview);
 foodRouter.put("/:id/reviews/:reviewId", authMiddleware, updateReview);
 foodRouter.delete("/:id/reviews/:reviewId", authMiddleware, deleteReview);

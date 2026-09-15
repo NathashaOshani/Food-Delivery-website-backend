@@ -1,4 +1,42 @@
-const emailConfigured = () => Boolean(process.env.RESEND_API_KEY && process.env.EMAIL_FROM);
+import nodemailer from "nodemailer";
+
+const emailProvider = () => process.env.EMAIL_PROVIDER || "resend";
+const emailConfigured = () => Boolean(process.env.EMAIL_FROM && (emailProvider() === "gmail"
+    ? process.env.GMAIL_USER && process.env.GMAIL_APP_PASSWORD?.replace(/\s/g, "")
+    : emailProvider() === "brevo" ? process.env.BREVO_API_KEY
+    : emailProvider() === "resend" && process.env.RESEND_API_KEY));
+
+const senderDetails = () => {
+    const value = process.env.EMAIL_FROM?.trim() || "";
+    const match = value.match(/^(.*?)\s*<([^<>]+)>$/);
+    return match ? { name: match[1].trim(), email: match[2].trim() } : { email: value };
+};
+
+const gmailTransport = () => nodemailer.createTransport({
+    service: "gmail",
+    auth: { user: process.env.GMAIL_USER, pass: process.env.GMAIL_APP_PASSWORD?.replace(/\s/g, "") },
+    connectionTimeout: 10000,
+    dnsTimeout: 10000,
+    greetingTimeout: 10000,
+    socketTimeout: 20000,
+    disableFileAccess: true,
+    disableUrlAccess: true,
+});
+
+// Checks SMTP authentication without sending a message.
+const verifyEmailConnection = async () => {
+    if (emailProvider() === "brevo") {
+        if (!emailConfigured()) throw new Error("Configure BREVO_API_KEY and EMAIL_FROM first");
+        const response = await fetch("https://api.brevo.com/v3/senders", { headers: { "api-key": process.env.BREVO_API_KEY }, signal: AbortSignal.timeout(20000) });
+        if (!response.ok) throw new Error(`Brevo connection check failed (${response.status})`);
+        const { senders = [] } = await response.json();
+        if (!senders.some((sender) => sender.email.toLowerCase() === senderDetails().email.toLowerCase() && sender.active)) throw new Error("Verify EMAIL_FROM as an active sender in Brevo first");
+        return true;
+    }
+    if (emailProvider() !== "gmail") throw new Error("Set EMAIL_PROVIDER=gmail to check Gmail SMTP");
+    if (!emailConfigured()) throw new Error("Configure EMAIL_FROM, GMAIL_USER, and GMAIL_APP_PASSWORD first");
+    return gmailTransport().verify();
+};
 
 const escapeHtml = (value) => String(value).replace(/[&<>'"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[character]);
 
@@ -21,7 +59,21 @@ const actionLink = (url, label) => `<table role="presentation" cellspacing="0" c
 
 const sendEmail = async ({ to, subject, html }) => {
     if (!emailConfigured()) return false;
+    if (emailProvider() === "gmail") {
+        await gmailTransport().sendMail({ from: process.env.EMAIL_FROM, to, subject, html: emailLayout(subject, html) });
+        return true;
+    }
+    if (emailProvider() === "brevo") {
+        const response = await fetch("https://api.brevo.com/v3/smtp/email", {
+            method: "POST", signal: AbortSignal.timeout(20000),
+            headers: { "api-key": process.env.BREVO_API_KEY, "Content-Type": "application/json" },
+            body: JSON.stringify({ sender: senderDetails(), to: [{ email: to }], subject, htmlContent: emailLayout(subject, html) }),
+        });
+        if (!response.ok) throw new Error(`Brevo rejected the email (${response.status})`);
+        return true;
+    }
     const response = await fetch("https://api.resend.com/emails", {
+        signal: AbortSignal.timeout(20000),
         method: "POST",
         headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "Content-Type": "application/json" },
         body: JSON.stringify({ from: process.env.EMAIL_FROM, to: [to], subject, html: emailLayout(subject, html) }),
@@ -69,4 +121,4 @@ const sendOrderNotificationEmail = async (order, kind) => {
     });
 };
 
-export { emailConfigured, sendOrderNotificationEmail, sendPasswordResetEmail, sendVerificationEmail };
+export { emailConfigured, sendOrderNotificationEmail, sendPasswordResetEmail, sendVerificationEmail, verifyEmailConnection };

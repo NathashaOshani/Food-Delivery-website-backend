@@ -16,6 +16,7 @@ const writeDatabase = (database) => {
 };
 const id = () => crypto.randomBytes(12).toString("hex");
 const matches = (item, query = {}) => Object.entries(query).every(([key, value]) => {
+    if (value && typeof value === "object" && "$exists" in value) return (key.split(".").reduce((entry, part) => entry?.[part], item) !== undefined) === value.$exists;
     if (value && value.$in) return value.$in.map(String).includes(String(item[key]));
     if (value && typeof value === "object" && "$ne" in value) return Array.isArray(item[key]) ? !item[key].map(String).includes(String(value.$ne)) : String(item[key]) !== String(value.$ne);
     if (value && typeof value === "object" && "$lt" in value) return new Date(item[key]).getTime() < new Date(value.$lt).getTime();
@@ -170,6 +171,7 @@ export const orderModel = {
             order[field] = order[field] || []; if (!order[field].map(String).includes(String(value))) order[field].push(value);
         }
         if (update.$push) for (const [field, value] of Object.entries(update.$push)) { order[field] = order[field] || []; order[field].push(value); }
+        if (update.$pull) for (const [field, value] of Object.entries(update.$pull)) order[field] = (order[field] || []).filter((entry) => String(entry) !== String(value));
         const plainUpdate = Object.fromEntries(Object.entries(update).filter(([key]) => !key.startsWith("$")));
         Object.assign(order, plainUpdate); await order.save(); return order;
     },

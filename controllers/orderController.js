@@ -7,7 +7,8 @@ import userModel from "../models/userModel.js";
 import couponModel from "../models/couponModel.js";
 import { calculateDiscount } from "./couponController.js";
 import { hasOnlyFields, isPlainObject, normalizeAddress } from "../config/validation.js";
-import { sendOrderNotificationEmail } from "../config/email.js";
+import { notifyOrder } from "../config/orderNotifications.js";
+import { settleCheckout } from "../config/checkout.js";
 import { cartKey, selectVariant, selectDesign, cakeDesigns, validVariantId } from "../config/foodOptions.js";
 
 const configuredDeliveryFee = Number(process.env.DELIVERY_FEE ?? 650);
@@ -18,7 +19,7 @@ const maxQuantity = 99;
 const idempotencyKeyPattern = /^[A-Za-z0-9._:-]{8,128}$/;
 
 const orderResponse = (order, repeated = false) => ({
-    success: true, repeated, paymentRequired: order.paymentMethod === "stripe",
+    success: true, repeated, paymentRequired: order.paymentMethod === "stripe" && !order.payment && order.status !== "Cancelled",
     ...(order.stripeSessionUrl ? { sessionUrl: order.stripeSessionUrl } : {}),
     orderId: order._id,
     message: repeated ? "Existing order returned" : "Order placed",
@@ -49,13 +50,6 @@ const restoreCouponUsage = async (order) => {
     if (!claimed) return;
     try { await couponModel.release(claimed.coupon.id, claimed.couponRedemptionToken); }
     catch (error) { claimed.couponUsageReleased = false; await claimed.save().catch(() => {}); throw error; }
-};
-
-const notifyOrder = async (order, key) => {
-    try {
-        const claimed = await orderModel.findOneAndUpdate({ _id: order._id, notificationKeys: { $ne: key } }, { $addToSet: { notificationKeys: key }, $push: { notificationLog: { key, createdAt: new Date() } } }, { new: true });
-        if (claimed) void sendOrderNotificationEmail(claimed, key).catch((error) => console.error("Order email failed:", error.message));
-    } catch (error) { console.error("Unable to queue order email:", error.message); }
 };
 
 const buildOrderItems = async (requestedItems = []) => {
@@ -107,6 +101,7 @@ const placeOrder = async (req, res) => {
         if (idempotencyKey) {
             const existing = await orderModel.findOne({ userId: req.userId, idempotencyKey });
             if (existing) {
+                if (existing.status === "Cancelled") return res.status(409).json({ success: false, code: "ORDER_CANCELLED", message: "The previous checkout was cancelled. Submit again to start a new order." });
                 if (existing.requestFingerprint !== requestFingerprint) return res.status(409).json({ success: false, message: "Idempotency-Key was already used for a different order" });
                 if (existing.paymentMethod === "stripe" && !existing.stripeSessionUrl) return res.status(409).json({ success: false, message: "Order creation is still in progress; retry shortly" });
                 return res.json(orderResponse(existing, true));
@@ -131,6 +126,7 @@ const placeOrder = async (req, res) => {
             reservedItems = [];
             if (claimedCoupon) { await couponModel.release(claimedCoupon._id, couponRedemptionToken); claimedCoupon = undefined; }
             const existing = await orderModel.findOne({ userId: req.userId, idempotencyKey });
+            if (existing?.status === "Cancelled") return res.status(409).json({ success: false, code: "ORDER_CANCELLED", message: "The previous checkout was cancelled. Submit again to start a new order." });
             if (!existing || existing.requestFingerprint !== requestFingerprint) return res.status(409).json({ success: false, message: "Idempotency-Key was already used for a different order" });
             if (existing.paymentMethod === "stripe" && !existing.stripeSessionUrl) return res.status(409).json({ success: false, message: "Order creation is still in progress; retry shortly" });
             return res.json(orderResponse(existing, true));
@@ -160,7 +156,7 @@ const placeOrder = async (req, res) => {
         await notifyOrder(order, "placed");
         res.status(201).json(orderResponse(order));
     } catch (error) {
-        const discardedOrder = order?.stripeSessionId === undefined && process.env.STRIPE_SECRET_KEY;
+        const discardedOrder = order && order.stripeSessionId === undefined && process.env.STRIPE_SECRET_KEY;
         if (discardedOrder) await order.deleteOne().catch(() => {});
         if ((!order || discardedOrder) && reservedItems.length) await foodModel.releaseInventory(items, reservedItems).catch(() => {});
         if ((!order || discardedOrder) && claimedCoupon) await couponModel.release(claimedCoupon._id, couponRedemptionToken).catch(() => {});
@@ -177,17 +173,18 @@ const verifyOrder = async (req, res) => {
     if (order.payment) return res.json({ success: true, paymentVerified: true, message: "Payment already verified" });
     if (!process.env.STRIPE_SECRET_KEY) return res.status(503).json({ success: false, message: "Stripe is not configured" });
 
-    const session = await new Stripe(process.env.STRIPE_SECRET_KEY).checkout.sessions.retrieve(order.stripeSessionId);
+    const { state, session } = await settleCheckout(new Stripe(process.env.STRIPE_SECRET_KEY), order.stripeSessionId);
     if (session.payment_intent && !order.stripePaymentIntentId) order.stripePaymentIntentId = String(session.payment_intent);
     if (session.payment_status === "paid") {
         order.payment = true;
-        order.status = order.status === "Cancelled" ? "Food Processing" : order.status;
+        order.paymentReviewRequired = order.status === "Cancelled";
         await order.save();
         await userModel.findByIdAndUpdate(req.userId, { cartData: {} });
         await notifyOrder(order, "payment-confirmed");
         return res.json({ success: true, paymentVerified: true, message: "Payment verified" });
     }
 
+    if (state !== "expired") return res.json({ success: true, paymentVerified: false, pending: true, message: "Payment is still processing. Check your orders shortly." });
     order.status = "Cancelled";
     await order.save();
     await restoreInventory(order);
@@ -213,8 +210,11 @@ const updateStatus = async (req, res) => {
     const order = await orderModel.findOne({ _id: req.body.orderId });
     if (!order) return res.status(404).json({ success: false, message: "Order not found" });
     if (["pending", "succeeded"].includes(order.refundStatus) && req.body.status !== "Cancelled") return res.status(409).json({ success: false, message: "A refunded order must remain cancelled" });
-    if (order.inventoryRestored && req.body.status !== "Cancelled") return res.status(409).json({ success: false, message: "A cancelled order cannot be reopened" });
-    if (req.body.status === "Cancelled" && order.paymentMethod === "stripe" && order.payment && !["pending", "succeeded"].includes(order.refundStatus)) return res.status(409).json({ success: false, message: "Start the Stripe refund through the customer cancellation flow" });
+    if ((order.inventoryRestored || order.status === "Cancelled") && req.body.status !== "Cancelled") return res.status(409).json({ success: false, message: "A cancelled order cannot be reopened" });
+    if (req.body.status === "Cancelled" && order.paymentMethod === "stripe") {
+        return cancelOrder({ ...req, params: { id: String(order._id) }, body: {}, userId: order.userId, isAdminCancellation: true }, res);
+    }
+    if (order.paymentMethod === "stripe" && !order.payment) return res.status(409).json({ success: false, message: "Wait for confirmed payment before fulfilling this order" });
     order.status = req.body.status; await order.save();
     if (order.status === "Cancelled") await restoreInventory(order);
     if (order.status === "Cancelled") await restoreCouponUsage(order);
@@ -228,7 +228,13 @@ const cancelOrder = async (req, res) => {
     const order = await orderModel.findOne({ _id: req.params.id, userId: req.userId });
     if (!order) return res.status(404).json({ success: false, message: "Order not found" });
     if (order.refundStatus === "pending" || order.refundStatus === "succeeded") return res.json({ success: true, message: order.refundStatus === "succeeded" ? "Order cancelled and refunded" : "Order cancelled; refund pending", data: order });
-    if (order.status !== "Food Processing") return res.status(409).json({ success: false, message: "This order can no longer be cancelled" });
+    if (order.status !== "Food Processing" && !(req.isAdminCancellation && order.status === "Cancelled" && order.paymentReviewRequired)) return res.status(409).json({ success: false, message: "This order can no longer be cancelled" });
+    if (order.paymentMethod === "stripe" && !order.payment) {
+        if (!process.env.STRIPE_SECRET_KEY || !order.stripeSessionId) return res.status(503).json({ success: false, message: "Payment verification is unavailable; try again shortly" });
+        const { state, session } = await settleCheckout(new Stripe(process.env.STRIPE_SECRET_KEY), order.stripeSessionId);
+        if (state === "pending") return res.status(409).json({ success: false, message: "Payment is still processing. Please try again shortly." });
+        if (state === "paid") { order.payment = true; order.stripePaymentIntentId = session.payment_intent ? String(session.payment_intent) : undefined; await order.save(); }
+    }
     if (order.paymentMethod === "stripe" && order.payment) {
         if (!process.env.STRIPE_SECRET_KEY) return res.status(503).json({ success: false, message: "Stripe is not configured" });
         try {
@@ -242,6 +248,7 @@ const cancelOrder = async (req, res) => {
             const refund = await stripe.refunds.create({ payment_intent: order.stripePaymentIntentId, reason: "requested_by_customer", metadata: { orderId: String(order._id), userId: String(order.userId) } }, { idempotencyKey: `order-refund-${order._id}` });
             order.stripeRefundId = refund.id;
             order.refundStatus = refund.status === "succeeded" ? "succeeded" : refund.status === "failed" || refund.status === "canceled" ? "failed" : "pending";
+            order.paymentReviewRequired = false;
             order.refundFailureReason = refund.failure_reason || undefined;
             order.refundedAt = refund.status === "succeeded" ? new Date() : undefined;
             order.status = "Cancelled";
@@ -254,13 +261,6 @@ const cancelOrder = async (req, res) => {
             console.error("Stripe refund failed:", error.message);
             return res.status(502).json({ success: false, message: "Refund could not be started. Please try again or contact support." });
         }
-    }
-    if (order.paymentMethod === "stripe" && order.stripeSessionId && process.env.STRIPE_SECRET_KEY) {
-        try {
-            const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
-            const session = await stripe.checkout.sessions.retrieve(order.stripeSessionId);
-            if (session.status === "open") await stripe.checkout.sessions.expire(session.id);
-        } catch (error) { return res.status(502).json({ success: false, message: "Checkout could not be cancelled. Please try again." }); }
     }
     order.status = "Cancelled";
     await order.save();
@@ -279,7 +279,7 @@ const completeStripeOrder = async (session, eventId) => {
     if (session.metadata?.orderId && String(order._id) !== session.metadata.orderId) throw new Error("Stripe session order metadata does not match");
     order.payment = true;
     if (session.payment_intent) order.stripePaymentIntentId = String(session.payment_intent);
-    if (order.status === "Cancelled") order.status = "Food Processing";
+    if (order.status === "Cancelled" && !order.refundStatus) order.paymentReviewRequired = true;
     order.stripeLastEventId = eventId;
     await order.save();
     await userModel.findByIdAndUpdate(order.userId, { cartData: {} });
@@ -290,6 +290,7 @@ const updateRefund = async (refund, eventId) => {
     const order = await orderModel.findOne(refund.metadata?.orderId ? { _id: refund.metadata.orderId } : { stripeRefundId: refund.id });
     if (!order || order.refundLastEventId === eventId) return;
     order.stripeRefundId = refund.id;
+    order.paymentReviewRequired = false;
     order.refundStatus = refund.status === "succeeded" ? "succeeded" : refund.status === "failed" || refund.status === "canceled" ? "failed" : "pending";
     order.refundFailureReason = refund.failure_reason || undefined;
     if (refund.payment_intent) order.stripePaymentIntentId = String(refund.payment_intent);
@@ -307,6 +308,7 @@ const completeChargeRefund = async (charge, eventId) => {
     const order = await orderModel.findOne({ stripePaymentIntentId: String(charge.payment_intent) });
     if (!order || order.refundLastEventId === eventId) return;
     order.refundStatus = "succeeded"; order.refundedAt = new Date(); order.refundLastEventId = eventId; order.status = "Cancelled";
+    order.paymentReviewRequired = false;
     await order.save();
     await restoreInventory(order);
     await restoreCouponUsage(order);

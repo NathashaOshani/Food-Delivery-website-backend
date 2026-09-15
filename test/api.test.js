@@ -512,6 +512,14 @@ test("complete customer and administrator API flow", async () => {
   assert.equal(result.data.data.find((food) => food._id === foodId).ratingAverage, 4);
   result = await request(`/api/food/${foodId}/reviews/${reviewId}/moderate`, { method: "PATCH", token, body: { isVisible: false } });
   assert.equal(result.response.status, 200);
+  result = await request(`/api/food/${foodId}/reviews/mine`, { token });
+  assert.equal(result.data.data.id, reviewId);
+  assert.equal(result.data.data.isVisible, false);
+  assert.equal(result.data.eligible, true);
+  result = await request(`/api/food/${foodId}/reviews/admin`, { token });
+  assert.equal(result.data.data[0].id, reviewId);
+  result = await request(`/api/food/${foodId}/reviews/admin`);
+  assert.equal(result.response.status, 401);
   result = await request(`/api/food/${foodId}/reviews`);
   assert.equal(result.data.pagination.total, 0);
   result = await request(`/api/food/${foodId}/reviews/${reviewId}/moderate`, { method: "PATCH", token, body: { isVisible: true } });

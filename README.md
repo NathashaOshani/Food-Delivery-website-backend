@@ -4,6 +4,35 @@ Express and MongoDB backend for the Tomato React storefront.
 
 ## Setup
 
+### Gmail email delivery (no custom domain required)
+
+Enable Google 2-Step Verification and create a Google App Password for your sending
+account. If Google says App Passwords is unavailable, resolve that account restriction
+first; your normal Google password cannot be used here.
+
+Update the existing entries in your local `.env`:
+
+```env
+EMAIL_PROVIDER=gmail
+GMAIL_USER=youraddress@gmail.com
+GMAIL_APP_PASSWORD=your-google-app-password
+EMAIL_FROM=Food <youraddress@gmail.com>
+CLIENT_URL=http://localhost:5173
+```
+
+Keep the App Password private. Gmail's displayed spaces are removed automatically.
+The sender must match `GMAIL_USER`. Set `CLIENT_URL` to the frontend's public URL
+when deployed so recipients can open the links. Restart the backend after editing.
+Run `npm run email:check` to verify SMTP authentication without sending email.
+Then test verification/password reset from the storefront. Gmail sending limits apply.
+The styled emails and account verification rules are shared by both providers.
+
+Existing Resend configuration remains supported: omit `EMAIL_PROVIDER` or set it to
+`resend`. Selecting Gmail ignores any retained `RESEND_API_KEY`; there is no automatic
+fallback to another sender if delivery fails.
+
+### Start the backend
+
 1. Copy `.env.example` to `.env` and set a long random `JWT_SECRET`. `DB_MODE=local` uses `data/local-db.json` for zero-setup development. For production, remove `DB_MODE` and set `MONGODB_URI` to MongoDB or Atlas.
 2. Run `npm install` and `npm run server`.
 3. Register a user, then promote an administrator when needed:
@@ -23,12 +52,17 @@ and `checkout.session.expired`.
 For refund reconciliation, also enable `refund.created`, `refund.updated`,
 `refund.failed`, and `charge.refunded` on the same signed webhook endpoint.
 
-When Resend is configured, customers receive deduplicated emails for order
+When Gmail or Resend is configured, customers receive emails for order
 creation, payment confirmation, status changes, cancellation, and refund state
-changes. Provider failures are logged and never roll back the order operation.
+changes. Notifications are stored on the order and retried every 30 seconds,
+including after server restarts. Successful delivery is recorded separately
+from pending delivery, and workers use a database lease to avoid concurrent sends.
+Provider failures never roll back the order operation. SMTP cannot guarantee
+exactly-once delivery if the process stops after the provider accepts a message
+but before its receipt is saved; such a message may be retried.
 
-To require email verification for new registrations, set `RESEND_API_KEY` and
-`EMAIL_FROM` to a verified sender (for example, `Food <orders@yourdomain.com>`).
+To require email verification for new registrations, configure Gmail as above,
+or set `RESEND_API_KEY` and `EMAIL_FROM` to a verified Resend sender.
 Verification links use the first origin in `CLIENT_URL` and expire after 24 hours.
 If email is not configured, local registrations remain immediately usable.
 
@@ -195,3 +229,33 @@ Run `npm test` for the zero-setup local integration suite. To exercise the real
 MongoDB models, point `MONGODB_TEST_URI` at a disposable database whose name
 contains `test`, then run `npm run test:mongo`. That suite drops the named test
 database when it finishes.
+
+## Completed storefront controls
+
+Checkout supports coupon previews and sends a persistent `Idempotency-Key` for
+each checkout attempt. Retrying the same checkout after a lost response uses
+the same key. Changing the cart, address, or coupon starts a new attempt.
+Both customer and administrator order pages have pagination. Administrators
+can view full delivery addresses and contact details, manage coupons, and
+hide or restore reviews. Food details let eligible customers write, edit,
+and delete reviews and save dishes to the Favorites page.
+
+Cancellation verifies or expires the Stripe session before releasing stock.
+Processing payments retain their stock reservation. A late payment for an
+already cancelled order stays cancelled and is flagged in the admin dashboard,
+where the administrator can refund it. Unpaid online orders cannot be fulfilled.
+
+The mobile apps remain under development. To connect published apps and social
+accounts later, add these optional entries to `frontend/.env` and restart Vite
+(or rebuild the frontend for deployment). Empty entries show no inactive links:
+
+```env
+VITE_PLAY_STORE_URL=
+VITE_APP_STORE_URL=
+VITE_FACEBOOK_URL=
+VITE_TWITTER_URL=
+VITE_LINKEDIN_URL=
+```
+
+Use full HTTPS URLs. The footer links to About, Delivery, and Privacy information
+pages, and its phone and email links open the corresponding contact application.

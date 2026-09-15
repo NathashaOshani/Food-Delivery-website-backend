@@ -16,6 +16,8 @@ import { cleanupAbandonedOrders, stripeWebhook } from "./controllers/orderContro
 import openapiSpecification from "./config/openapi.js";
 import { validateEnvironment } from "./config/env.js";
 import { logger } from "./config/logger.js";
+import { retryOrderNotifications } from "./config/orderNotifications.js";
+import { serveMongoImage } from "./config/imageStorage.js";
 
 const app = express();
 const port = Number(process.env.PORT) || 4000;
@@ -37,6 +39,7 @@ app.post("/api/order/webhook", express.raw({ type: "application/json" }), stripe
 app.use(express.json({ limit: "1mb" }));
 app.get("/health/live", (req, res) => res.json({ status: "ok" }));
 app.get("/health/ready", (req, res) => res.status(isDatabaseReady() ? 200 : 503).json({ status: isDatabaseReady() ? "ready" : "not_ready", database: isDatabaseReady() ? "connected" : "disconnected" }));
+app.get("/uploads/:filename", serveMongoImage);
 app.use("/uploads", express.static(path.join(currentDirectory, "uploads")));
 app.get("/api-docs.json", (req, res) => res.json(openapiSpecification));
 app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(openapiSpecification, { explorer: true }));
@@ -60,6 +63,9 @@ app.use((error, req, res, next) => {
 try {
     validateEnvironment();
     await connectDB();
+    const retryEmails = () => retryOrderNotifications().catch((error) => logger.error("order_email_retry_failed", { error: error.message }));
+    void retryEmails();
+    setInterval(retryEmails, 30_000).unref();
     app.listen(port, () => logger.info("server_started", { port, messageText: `Server started on http://localhost:${port}` }));
     if (process.env.STRIPE_SECRET_KEY) {
         const intervalMs = Number(process.env.ORDER_CLEANUP_INTERVAL_MINUTES ?? 15) * 60_000;
@@ -71,4 +77,3 @@ try {
 }
 
 export default app;
-

@@ -32,6 +32,7 @@ const orderSchema = new mongoose.Schema({
     },
     status: { type: String, enum: ["Food Processing", "Out for delivery", "Delivered", "Cancelled"], default: "Food Processing" },
     payment: { type: Boolean, default: false },
+    paymentReviewRequired: { type: Boolean, default: false },
     paymentMethod: { type: String, enum: ["cash", "stripe"], required: true },
     idempotencyKey: { type: String, maxlength: 128 },
     requestFingerprint: String,
@@ -47,6 +48,9 @@ const orderSchema = new mongoose.Schema({
     inventoryItemIds: { type: [String], default: [] },
     inventoryRestored: { type: Boolean, default: false },
     notificationKeys: { type: [String], default: [] },
+    notificationPendingKeys: { type: [String], default: [] },
+    notificationLeaseUntil: { type: Date, default: () => new Date(0) },
+    notificationLeaseToken: String,
     notificationLog: { type: [{ key: { type: String, required: true }, createdAt: { type: Date, default: Date.now } }], default: [] },
 }, { timestamps: true });
 

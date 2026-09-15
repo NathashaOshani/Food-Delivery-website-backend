@@ -26,13 +26,22 @@ const refreshFoodRating = async (foodId) => {
     await food.save();
 };
 
-export const listFoodReviews = async (req, res) => {
+export const myFoodReview = async (req, res) => {
+    if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ success: false, message: "A valid food id is required" });
+    const review = await reviewModel.findOne({ foodId: req.params.id, userId: req.userId });
+    const orders = await orderModel.find({ userId: req.userId, status: "Delivered" });
+    res.json({ success: true, data: review ? reviewView(review) : null, eligible: orders.some((order) => order.items.some((item) => String(item.food) === req.params.id)) });
+};
+
+export const listAdminFoodReviews = async (req, res) => listFoodReviews(req, res, true);
+
+export const listFoodReviews = async (req, res, includeHidden = false) => {
     if (!mongoose.isValidObjectId(req.params.id)) return res.status(400).json({ success: false, message: "A valid food id is required" });
     if (!hasOnlyFields(req.query, ["page", "limit"])) return res.status(400).json({ success: false, message: "Unknown query parameter" });
     const page = Number(req.query.page ?? 1); const limit = Number(req.query.limit ?? 10);
     if (!Number.isInteger(page) || page < 1 || !Number.isInteger(limit) || limit < 1 || limit > 100) return res.status(400).json({ success: false, message: "Page must be positive and limit must be between 1 and 100" });
     if (!(await foodModel.exists({ _id: req.params.id }))) return res.status(404).json({ success: false, message: "Food not found" });
-    const query = { foodId: req.params.id, isVisible: true }; const total = await reviewModel.countDocuments(query);
+    const query = { foodId: req.params.id, ...(includeHidden === true ? {} : { isVisible: true }) }; const total = await reviewModel.countDocuments(query);
     const reviews = await reviewModel.find(query).sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit);
     res.json({ success: true, data: reviews.map(reviewView), pagination: { page, limit, total, pages: total ? Math.ceil(total / limit) : 0 } });
 };

@@ -1,5 +1,4 @@
 import fs from "fs";
-import path from "path";
 import mongoose from "mongoose";
 import foodModel from "../models/foodmodel.js";
 import reviewModel from "../models/reviewModel.js";
@@ -7,11 +6,12 @@ import userModel from "../models/userModel.js";
 import categoryModel from "../models/categoryModel.js";
 import { canonicalCategory, hasOnlyFields } from "../config/validation.js";
 import { normalizeVariants, normalizeDesignOptions, validPrice } from "../config/foodOptions.js";
+import { deleteStoredImage, persistUploadedImage } from "../config/imageStorage.js";
 
 const deleteImage = async (filename) => {
     if (!filename) return;
     try {
-        await fs.promises.unlink(path.join("uploads", path.basename(filename)));
+        await deleteStoredImage(filename);
     } catch (error) {
         if (error.code !== "ENOENT") console.error("Unable to delete image:", error);
     }
@@ -74,6 +74,7 @@ const addFood = async (req, res) => {
             await deleteImage(req.file.filename);
             return res.status(400).json({ success: false, message: fields.error });
         }
+        await persistUploadedImage(req.file);
         const food = await foodModel.create({ ...fields, image: req.file.filename });
         res.status(201).json({ success: true, message: "Food added", data: food });
     } catch (error) {
@@ -106,6 +107,7 @@ const updateFood = async (req, res) => {
         }
 
         const previousImage = food.image;
+        if (req.file) await persistUploadedImage(req.file);
         Object.assign(food, fields);
         if (req.file) food.image = req.file.filename;
         await food.save();
