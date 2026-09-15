@@ -8,10 +8,12 @@ import couponModel from "../models/couponModel.js";
 import { calculateDiscount } from "./couponController.js";
 import { hasOnlyFields, isPlainObject, normalizeAddress } from "../config/validation.js";
 import { sendOrderNotificationEmail } from "../config/email.js";
+import { cartKey, selectVariant, selectDesign, cakeDesigns, validVariantId } from "../config/foodOptions.js";
 
-const configuredDeliveryFee = Number(process.env.DELIVERY_FEE ?? 2);
-const deliveryFee = Number.isFinite(configuredDeliveryFee) && configuredDeliveryFee >= 0 ? configuredDeliveryFee : 2;
-const currency = (process.env.CURRENCY || "usd").toLowerCase();
+const configuredDeliveryFee = Number(process.env.DELIVERY_FEE ?? 650);
+const deliveryFee = Number.isFinite(configuredDeliveryFee) && configuredDeliveryFee >= 0 ? configuredDeliveryFee : 650;
+const taxRate = 0.1;
+const currency = "lkr";
 const maxQuantity = 99;
 const idempotencyKeyPattern = /^[A-Za-z0-9._:-]{8,128}$/;
 
@@ -23,7 +25,7 @@ const orderResponse = (order, repeated = false) => ({
 });
 
 const fingerprintOrder = (items, address, couponCode) => crypto.createHash("sha256").update(JSON.stringify({
-    items: items.map((item) => ({ food: String(item.food), quantity: item.quantity })).sort((a, b) => a.food.localeCompare(b.food)),
+    items: items.map((item) => ({ food: String(item.food), quantity: item.quantity, ...(item.variantId ? { variantId: item.variantId } : {}), ...(item.designId ? { designId: item.designId } : {}) })).sort((a, b) => cartKey(a.food, a.variantId, a.designId).localeCompare(cartKey(b.food, b.variantId, b.designId))),
     address, couponCode,
 })).digest("hex");
 
@@ -61,18 +63,30 @@ const buildOrderItems = async (requestedItems = []) => {
     if (requestedItems.length > 50) throw new Error("An order cannot contain more than 50 different items");
     const quantities = new Map();
     for (const item of requestedItems) {
-        if (!hasOnlyFields(item, ["itemId", "id", "_id", "quantity"])) throw new Error("Cart item contains unknown fields");
+        if (!hasOnlyFields(item, ["itemId", "id", "_id", "quantity", "variantId", "designId"])) throw new Error("Cart item contains unknown fields");
         const id = item.itemId || item._id || item.id;
         const quantity = Number(item.quantity);
         if (!mongoose.isValidObjectId(id) || !Number.isInteger(quantity) || quantity < 1 || quantity > maxQuantity) {
             throw new Error("Cart contains an invalid item or quantity");
         }
-        if (quantities.has(String(id))) throw new Error("Cart contains a duplicate item");
-        quantities.set(String(id), quantity);
+        if (item.variantId !== undefined && !validVariantId(item.variantId)) throw new Error("Invalid option id");
+        if (item.designId !== undefined && !cakeDesigns.some((design) => design.id === item.designId)) throw new Error("Invalid cake design");
+        const key = cartKey(String(id), item.variantId, item.designId);
+        if (quantities.has(key)) throw new Error("Cart contains a duplicate item");
+        quantities.set(key, { id: String(id), variantId: item.variantId, designId: item.designId, quantity });
     }
-    const foods = await foodModel.find({ _id: { $in: [...quantities.keys()] } });
-    if (!foods.length || foods.length !== quantities.size) throw new Error("One or more food items are unavailable");
-    return foods.map((food) => ({ food: food._id, name: food.name, price: food.price, image: food.image, quantity: quantities.get(String(food._id)) }));
+    const ids = [...new Set([...quantities.values()].map((item) => item.id))];
+    const foods = await foodModel.find({ _id: { $in: ids } });
+    if (!foods.length || foods.length !== ids.length) throw new Error("One or more food items are unavailable");
+    return [...quantities.values()].map((item) => {
+        const food = foods.find((entry) => String(entry._id) === item.id);
+        const design = selectDesign(food, item.designId);
+        const variant = selectVariant(food, item.variantId, item.designId);
+        return { food: food._id, name: `${food.name}${variant ? ` (${variant.name})` : ""}${design ? ` - ${design.name}` : ""}`,
+            price: variant ? variant.price : food.price, image: food.image, quantity: item.quantity,
+            ...(variant ? { variantId: variant.id, variantName: variant.name } : {}),
+            ...(design ? { designId: design.id, designName: design.name } : {}) };
+    });
 };
 
 const placeOrder = async (req, res) => {
@@ -107,9 +121,10 @@ const placeOrder = async (req, res) => {
             claimedCoupon = await couponModel.claim({ code: couponCode, userId: req.userId, token: couponRedemptionToken, subtotal });
             discount = calculateDiscount(claimedCoupon, subtotal);
         }
-        const amount = Number((subtotal - discount + deliveryFee).toFixed(2));
+        const taxAndService = Number(((subtotal - discount + deliveryFee) * taxRate).toFixed(2));
+        const amount = Number((subtotal - discount + deliveryFee + taxAndService).toFixed(2));
         try {
-            order = await orderModel.create({ userId: req.userId, items, subtotal, deliveryFee, discount, amount, address, paymentMethod, inventoryItemIds: reservedItems, idempotencyKey, requestFingerprint, coupon: claimedCoupon ? { id: claimedCoupon._id, code: claimedCoupon.code, type: claimedCoupon.type, value: claimedCoupon.value } : undefined, couponRedemptionToken });
+            order = await orderModel.create({ userId: req.userId, items, subtotal, deliveryFee, discount, taxAndService, amount, address, paymentMethod, inventoryItemIds: reservedItems, idempotencyKey, requestFingerprint, coupon: claimedCoupon ? { id: claimedCoupon._id, code: claimedCoupon.code, type: claimedCoupon.type, value: claimedCoupon.value } : undefined, couponRedemptionToken });
         } catch (error) {
             if (error.code !== 11000 || !idempotencyKey) throw error;
             await foodModel.releaseInventory(items, reservedItems);
@@ -131,6 +146,7 @@ const placeOrder = async (req, res) => {
         const clientUrl = process.env.CLIENT_URL?.split(",")[0] || "http://localhost:5173";
         const lineItems = [{ price_data: { currency, product_data: { name: claimedCoupon ? `Food order (${claimedCoupon.code} applied)` : "Food order" }, unit_amount: Math.round((subtotal - discount) * 100) }, quantity: 1 }];
         lineItems.push({ price_data: { currency, product_data: { name: "Delivery fee" }, unit_amount: Math.round(deliveryFee * 100) }, quantity: 1 });
+        lineItems.push({ price_data: { currency, product_data: { name: "Tax & Service (10%)" }, unit_amount: Math.round(taxAndService * 100) }, quantity: 1 });
         const session = await stripe.checkout.sessions.create({
             line_items: lineItems,
             mode: "payment",
@@ -254,7 +270,7 @@ const cancelOrder = async (req, res) => {
     res.json({ success: true, message: "Order cancelled", data: order });
 };
 
-const getOrderConfig = (req, res) => res.json({ success: true, deliveryFee, currency, onlinePaymentEnabled: Boolean(process.env.STRIPE_SECRET_KEY) });
+const getOrderConfig = (req, res) => res.json({ success: true, deliveryFee, taxRate, currency, onlinePaymentEnabled: Boolean(process.env.STRIPE_SECRET_KEY) });
 
 const completeStripeOrder = async (session, eventId) => {
     if (session.payment_status !== "paid") return;

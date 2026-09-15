@@ -1,5 +1,5 @@
 import express from "express";
-import { forgotPassword, getCurrentUser, loginUser, registerUser, resendVerification, resetPassword, verifyEmail } from "../controllers/userController.js";
+import { forgotPassword, getCurrentUser, loginUser, loginWithGoogle, registerUser, resendVerification, resetPassword, verifyEmail } from "../controllers/userController.js";
 import authMiddleware from "../middleware/auth.js";
 import { createRateLimiter } from "../config/validation.js";
 import { addAddress, deleteAddress, listAddresses, updateAddress, updateProfile } from "../controllers/profileController.js";
@@ -10,6 +10,7 @@ const authLimiter = createRateLimiter({ windowMs: 15 * 60 * 1000, max: 30 });
 const emailLimiter = createRateLimiter({ windowMs: 60 * 60 * 1000, max: 10 });
 userRouter.post("/register", authLimiter, registerUser);
 userRouter.post("/login", authLimiter, loginUser);
+userRouter.post("/google", authLimiter, loginWithGoogle);
 userRouter.post("/verify-email", emailLimiter, verifyEmail);
 userRouter.post("/resend-verification", emailLimiter, resendVerification);
 userRouter.post("/forgot-password", emailLimiter, forgotPassword);

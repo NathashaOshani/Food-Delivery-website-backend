@@ -100,7 +100,8 @@ export const foodModel = {
             const food = database.foods.find((entry) => entry._id === String(item.food));
             if (!food || food.isAvailable === false) throw new Error(`${item.name} is currently unavailable`);
             if (food.stock !== null && food.stock !== undefined) {
-                if (food.stock < item.quantity) throw new Error(`Only ${food.stock} of ${item.name} are available`);
+                const totalQuantity = items.filter((entry) => String(entry.food) === String(item.food)).reduce((total, entry) => total + entry.quantity, 0);
+                if (food.stock < totalQuantity) throw new Error(`Only ${food.stock} of ${item.name} are available`);
                 trackedIds.push(String(item.food));
             }
         }

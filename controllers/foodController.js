@@ -6,6 +6,7 @@ import reviewModel from "../models/reviewModel.js";
 import userModel from "../models/userModel.js";
 import categoryModel from "../models/categoryModel.js";
 import { canonicalCategory, hasOnlyFields } from "../config/validation.js";
+import { normalizeVariants, normalizeDesignOptions, validPrice } from "../config/foodOptions.js";
 
 const deleteImage = async (filename) => {
     if (!filename) return;
@@ -29,21 +30,35 @@ const validImageSignature = async (file) => {
 };
 
 const validateFoodFields = async (body, current = {}) => {
-    if (!hasOnlyFields(body, ["name", "description", "price", "category", "isAvailable", "stock"])) return { error: "Unknown food field" };
+    // Only the fields below are ever copied into the food model. Ignore extra
+    // multipart fields so stale clients cannot block an otherwise valid edit.
+    let variants;
+    try { variants = normalizeVariants(body.variants, current.variants || []); }
+    catch (error) { return { error: error.message }; }
     const name = typeof body.name === "string" ? body.name.trim() : "";
+    let designOptions;
+    try {
+        const isBirthdayCake = name.toLowerCase() === "birthday cake";
+        if (!isBirthdayCake && body.designOptions !== undefined) {
+            const submittedDesignOptions = typeof body.designOptions === "string" ? JSON.parse(body.designOptions) : body.designOptions;
+            if (!Array.isArray(submittedDesignOptions) || submittedDesignOptions.length) throw new Error("Design options are only available for Birthday Cake");
+        }
+        designOptions = isBirthdayCake ? normalizeDesignOptions(body.designOptions, current) : [];
+    } catch (error) { return { error: error.message }; }
     const description = typeof body.description === "string" ? body.description.trim() : "";
     const categoryInput = typeof body.category === "string" ? body.category.trim().replace(/\s+/g, " ") : "";
     const category = canonicalCategory(categoryInput) || (categoryInput.length <= 50 && (await categoryModel.findOne({ key: categoryInput.toLowerCase() }))?.name);
-    const price = typeof body.price === "string" || typeof body.price === "number" ? Number(body.price) : NaN;
+    const allDesignVariants = designOptions.flatMap((design) => design.variants);
+    const price = allDesignVariants.length ? Math.min(...allDesignVariants.map((option) => option.price)) : variants.length ? Math.min(...variants.map((option) => option.price)) : typeof body.price === "string" || typeof body.price === "number" ? Number(body.price) : NaN;
     const isAvailable = body.isAvailable === undefined ? (current.isAvailable ?? true) : body.isAvailable === true || body.isAvailable === "true" ? true : body.isAvailable === false || body.isAvailable === "false" ? false : null;
     const stock = body.stock === undefined ? (current.stock ?? null) : body.stock === "" || body.stock === null ? null : Number(body.stock);
     if (name.length < 2 || name.length > 100) return { error: "Name must be between 2 and 100 characters" };
     if (description.length < 3 || description.length > 500) return { error: "Description must be between 3 and 500 characters" };
     if (!category) return { error: "Select a valid food category" };
-    if (!Number.isFinite(price) || price < 0.01 || price > 100000 || Math.round(price * 100) !== price * 100) return { error: "Price must be between 0.01 and 100000 with at most two decimal places" };
+    if (!validPrice(price)) return { error: "Price must be between 0.01 and 100000 with at most two decimal places" };
     if (isAvailable === null) return { error: "isAvailable must be true or false" };
     if (stock !== null && (!Number.isInteger(stock) || stock < 0 || stock > 1000000)) return { error: "Stock must be empty or an integer between 0 and 1000000" };
-    return { name, description, category, price, isAvailable, stock };
+    return { name, description, category, price, isAvailable, stock, variants, designOptions };
 };
 
 const addFood = async (req, res) => {

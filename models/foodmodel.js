@@ -4,6 +4,19 @@ const foodSchema = new mongoose.Schema({
     name: { type: String, required: true, trim: true, maxlength: 100 },
     description: { type: String, required: true, trim: true, maxlength: 500 },
     price: { type: Number, required: true, min: 0.01 },
+    variants: { type: [new mongoose.Schema({
+        id: { type: String, required: true, match: /^[a-f0-9]{24}$/ },
+        name: { type: String, required: true, trim: true, maxlength: 40 },
+        price: { type: Number, required: true, min: 0.01, max: 100000 },
+    }, { _id: false })], default: [] },
+    designOptions: { type: [new mongoose.Schema({
+        designId: { type: String, required: true, enum: ["blue-teddy", "pink-teddy", "strawberry", "chocolate-drip"] },
+        variants: { type: [new mongoose.Schema({
+            id: { type: String, required: true, match: /^[a-f0-9]{24}$/ },
+            name: { type: String, required: true, trim: true, maxlength: 40 },
+            price: { type: Number, required: true, min: 0.01, max: 100000 },
+        }, { _id: false })], required: true },
+    }, { _id: false })], default: [] },
     image: { type: String, required: true },
     category: { type: String, required: true, trim: true, maxlength: 50 },
     isAvailable: { type: Boolean, default: true, index: true },

@@ -10,6 +10,12 @@ Express and MongoDB backend for the Tomato React storefront.
    `npm run make-admin -- user@example.com`
 4. Populate an empty development catalog with the included food images: `npm run seed`.
 
+Google sign-in requires a Web OAuth client ID from Google Cloud Console. Set the same
+client ID in the backend as `GOOGLE_CLIENT_ID` and in the frontend as
+`VITE_GOOGLE_CLIENT_ID`, then add your site's origin (for local development,
+`http://localhost:5173`) to the client's authorized JavaScript origins. The backend
+validates each Google ID token before creating or signing in a user.
+
 For reliable Stripe fulfillment, set `STRIPE_WEBHOOK_SECRET` and register
 `POST /api/order/webhook` for `checkout.session.completed`,
 `checkout.session.async_payment_succeeded`, `checkout.session.async_payment_failed`,
@@ -118,6 +124,39 @@ Email and Stripe delivery still require their environment configuration.
 | POST | `/api/order/status` | Admin | Update `orderId` and `status` |
 
 Order items accept `{ "itemId": "food-id", "quantity": 2 }`. Prices and totals are always recalculated from MongoDB rather than trusted from the client.
+
+## Sizes and priced options
+
+In **Admin Dashboard > Add food / Edit food > Sizes / options**, add option
+names and prices (for example Small, Medium, and Large). Leave options empty
+for a food with one price. Customers see every option and its price on the food
+details page and must choose one before adding it to the cart. Menu cards show
+the lowest price with a "From" label and link to the option selector.
+
+Food create/update requests accept a multipart `variants` field containing a
+JSON array, such as `[{"name":"Small","price":8.99},{"name":"Large","price":16.99}]`.
+Up to 12 uniquely named options are allowed. The API assigns stable `id` values;
+include these when editing existing options. Omitting `variants` preserves
+existing options, while `[]` removes them and requires a regular `price`.
+For foods with options, the catalog `price` is the lowest option price.
+
+Birthday Cake has Blue Teddy, Pink Teddy, Strawberry, and Chocolate Drip design
+cards in the admin editor. Set sizes and prices separately for each design;
+customers can then select quantities across designs and sizes in one order.
+Food create/update accepts a multipart `designOptions` JSON array with all four
+design IDs and each design's own `variants`. Each design needs at least one
+size. Send its `designId` (`blue-teddy`,
+`pink-teddy`, `strawberry`, or `chocolate-drip`) with each Birthday Cake cart or
+checkout item. The selected design and size appear on its cart line and order
+snapshot, with prices taken from that design's options.
+
+Send `variantId` alongside `itemId` when adding, decrementing, or clearing an
+option in the cart, and in each checkout item. Birthday Cake cart quantities
+also include the design ID (`foodId:variantId:designId`); ordinary foods retain
+their original keys. Different sizes and designs remain separate lines.
+Checkout validates the choice and uses its current saved price. Orders snapshot
+the option id, name, and price, so later menu edits do not change order history.
+Stock is shared across all sizes and designs of a food.
 
 ## Coupons
 

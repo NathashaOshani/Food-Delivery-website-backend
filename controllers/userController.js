@@ -2,6 +2,7 @@ import bcrypt from "bcrypt";
 import crypto from "crypto";
 import jwt from "jsonwebtoken";
 import validator from "validator";
+import { OAuth2Client } from "google-auth-library";
 import userModel from "../models/userModel.js";
 import { emailConfigured, sendPasswordResetEmail, sendVerificationEmail } from "../config/email.js";
 import { boundedString, byteLength, hasOnlyFields } from "../config/validation.js";
@@ -12,6 +13,7 @@ const verificationToken = () => {
     return { token, hash: crypto.createHash("sha256").update(token).digest("hex"), expires: new Date(Date.now() + 24 * 60 * 60 * 1000) };
 };
 const publicUser = (user) => ({ id: user._id, name: user.name, email: user.email, role: user.role, emailVerified: user.emailVerified !== false });
+const googleClient = new OAuth2Client();
 
 const registerUser = async (req, res) => {
     if (!hasOnlyFields(req.body, ["name", "email", "password"])) return res.status(400).json({ success: false, message: "Only name, email, and password are allowed" });
@@ -54,6 +56,65 @@ const loginUser = async (req, res) => {
         return res.status(401).json({ success: false, message: "Invalid email or password" });
     }
     if (user.emailVerified === false) return res.status(403).json({ success: false, verificationRequired: true, message: "Verify your email before signing in" });
+    res.json({ success: true, token: createToken(user._id, user.tokenVersion), user: publicUser(user) });
+};
+
+const loginWithGoogle = async (req, res) => {
+    if (!hasOnlyFields(req.body, ["credential"])) return res.status(400).json({ success: false, message: "Only credential is allowed" });
+    if (!process.env.GOOGLE_CLIENT_ID) return res.status(503).json({ success: false, message: "Google sign-in is not configured" });
+    if (!process.env.JWT_SECRET) return res.status(500).json({ success: false, message: "JWT_SECRET is not configured" });
+    const credential = req.body.credential;
+    if (typeof credential !== "string" || credential.length > 8192) return res.status(400).json({ success: false, message: "A valid Google credential is required" });
+
+    let payload;
+    try {
+        const ticket = await googleClient.verifyIdToken({ idToken: credential, audience: process.env.GOOGLE_CLIENT_ID });
+        payload = ticket.getPayload();
+    } catch {
+        return res.status(401).json({ success: false, message: "Google sign-in could not be verified" });
+    }
+    const email = typeof payload?.email === "string" ? payload.email.trim().toLowerCase() : "";
+    const googleId = payload?.sub;
+    if (!googleId || !validator.isEmail(email) || payload.email_verified !== true) {
+        return res.status(401).json({ success: false, message: "Google must provide a verified email address" });
+    }
+
+    let user = await userModel.findOne({ googleId });
+    if (!user) {
+        user = await userModel.findOne({ email });
+        if (user) {
+            const googleOwnsEmail = email.endsWith("@gmail.com") || Boolean(payload.hd);
+            if (!googleOwnsEmail) return res.status(409).json({ success: false, message: "An account already uses this email. Sign in with that account before linking Google." });
+            if (user.googleId && user.googleId !== googleId) return res.status(409).json({ success: false, message: "This email is linked to another Google account" });
+            user.googleId = googleId;
+            user.emailVerified = true;
+            user.emailVerificationTokenHash = undefined;
+            user.emailVerificationExpires = undefined;
+            await user.save();
+        } else {
+            const fallbackName = email.split("@")[0].replace(/[._+-]+/g, " ").trim() || "Google user";
+            const name = (typeof payload.name === "string" && payload.name.trim() ? payload.name.trim() : fallbackName).slice(0, 80);
+            try {
+                user = await userModel.create({
+                    name,
+                    email,
+                    password: await bcrypt.hash(crypto.randomBytes(32).toString("hex"), 12),
+                    googleId,
+                    emailVerified: true,
+                });
+            } catch (error) {
+                if (error.code !== 11000) throw error;
+                user = await userModel.findOne({ googleId });
+                if (!user) return res.status(409).json({ success: false, message: "An account already uses this email" });
+            }
+        }
+    } else if (user.emailVerified !== true) {
+        user.emailVerified = true;
+        user.emailVerificationTokenHash = undefined;
+        user.emailVerificationExpires = undefined;
+        await user.save();
+    }
+
     res.json({ success: true, token: createToken(user._id, user.tokenVersion), user: publicUser(user) });
 };
 
@@ -138,4 +199,4 @@ const resetPassword = async (req, res) => {
     res.json({ success: true, message: "Password reset successfully. Sign in with your new password." });
 };
 
-export { registerUser, loginUser, getCurrentUser, verifyEmail, resendVerification, forgotPassword, resetPassword };
+export { registerUser, loginUser, loginWithGoogle, getCurrentUser, verifyEmail, resendVerification, forgotPassword, resetPassword };

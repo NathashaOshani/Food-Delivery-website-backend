@@ -5,6 +5,10 @@ const jsonBody = (schema) => ({
 
 const bearer = [{ bearerAuth: [] }];
 const response = (description) => ({ description });
+const variantIdSchema = { type: "string", pattern: "^[a-f0-9]{24}$", description: "Required when the food has options; use an id returned in food.variants" };
+const designIdSchema = { type: "string", enum: ["blue-teddy", "pink-teddy", "strawberry", "chocolate-drip"], description: "Required for Birthday Cake" };
+const variantsField = { type: "string", description: 'JSON array of up to 12 {name, price} options. Include existing id values when editing. Omit to preserve options; [] removes them. The lowest option price becomes the catalog price.', example: '[{"name":"Small","price":8.99},{"name":"Medium","price":12.50},{"name":"Large","price":16.99}]' };
+const designOptionsField = { type: "string", description: 'Birthday Cake only: JSON array containing each designId and its own variants array. Each of the four designs needs at least one size and price.', example: '[{"designId":"blue-teddy","variants":[{"name":"500g","price":8},{"name":"1kg","price":12}]}]' };
 
 const openapiSpecification = {
     openapi: "3.0.3",
@@ -40,7 +44,7 @@ const openapiSpecification = {
             ItemId: {
                 type: "object",
                 required: ["itemId"],
-                properties: { itemId: { type: "string", example: "507f1f77bcf86cd799439011" } },
+                properties: { itemId: { type: "string", example: "507f1f77bcf86cd799439011" }, variantId: variantIdSchema, designId: designIdSchema },
             },
             Error: {
                 type: "object",
@@ -75,7 +79,7 @@ const openapiSpecification = {
         "/api/food/add": {
             post: {
                 tags: ["Admin"], summary: "Add a food item", security: bearer,
-                requestBody: { required: true, content: { "multipart/form-data": { schema: { type: "object", required: ["image", "name", "description", "price", "category"], properties: { image: { type: "string", format: "binary" }, name: { type: "string" }, description: { type: "string" }, price: { type: "number" }, category: { type: "string" }, isAvailable: { type: "boolean", default: true }, stock: { type: "integer", minimum: 0, nullable: true, description: "Null or omitted means unlimited inventory" } } } } } },
+                requestBody: { required: true, content: { "multipart/form-data": { schema: { type: "object", required: ["image", "name", "description", "category"], properties: { image: { type: "string", format: "binary" }, name: { type: "string" }, description: { type: "string" }, price: { type: "number", description: "Required for foods without options; otherwise derived from the lowest option price" }, variants: variantsField, designOptions: designOptionsField, category: { type: "string" }, isAvailable: { type: "boolean", default: true }, stock: { type: "integer", minimum: 0, nullable: true, description: "Null or omitted means unlimited inventory" } } } } } },
                 responses: { 201: response("Food added"), 400: response("Invalid input"), 401: response("Not authenticated"), 403: response("Administrator required") },
             },
         },
@@ -86,7 +90,7 @@ const openapiSpecification = {
             put: {
                 tags: ["Admin"], summary: "Update a food item", security: bearer,
                 parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
-                requestBody: { required: true, content: { "multipart/form-data": { schema: { type: "object", required: ["name", "description", "price", "category"], properties: { image: { type: "string", format: "binary", description: "Optional replacement image" }, name: { type: "string" }, description: { type: "string" }, price: { type: "number" }, category: { type: "string" }, isAvailable: { type: "boolean" }, stock: { type: "integer", minimum: 0, nullable: true, description: "Empty means unlimited inventory" } } } } } },
+                requestBody: { required: true, content: { "multipart/form-data": { schema: { type: "object", required: ["name", "description", "category"], properties: { image: { type: "string", format: "binary", description: "Optional replacement image" }, name: { type: "string" }, description: { type: "string" }, price: { type: "number", description: "Required for foods without options; otherwise derived from the lowest option price" }, variants: variantsField, designOptions: designOptionsField, category: { type: "string" }, isAvailable: { type: "boolean" }, stock: { type: "integer", minimum: 0, nullable: true, description: "Empty means unlimited inventory" } } } } } },
                 responses: { 200: response("Food updated"), 400: response("Invalid input"), 401: response("Not authenticated"), 403: response("Administrator required"), 404: response("Food not found") },
             },
         },
@@ -106,6 +110,9 @@ const openapiSpecification = {
         },
         "/api/user/login": {
             post: { tags: ["Users"], summary: "Log in", requestBody: jsonBody({ $ref: "#/components/schemas/Credentials" }), responses: { 200: response("Returns JWT and user"), 401: response("Invalid credentials") } },
+        },
+        "/api/user/google": {
+            post: { tags: ["Users"], summary: "Log in with a Google ID token", requestBody: jsonBody({ type: "object", required: ["credential"], properties: { credential: { type: "string", description: "Google Identity Services ID token" } } }), responses: { 200: response("Returns JWT and user"), 401: response("Invalid Google credential"), 409: response("Email belongs to a different account"), 503: response("Google sign-in is not configured") } },
         },
         "/api/user/verify-email": {
             post: { tags: ["Users"], summary: "Verify an email address", requestBody: jsonBody({ type: "object", required: ["token"], properties: { token: { type: "string", description: "Token from the verification link" } } }), responses: { 200: response("Email verified"), 400: response("Invalid or expired verification link") } },
@@ -141,7 +148,7 @@ const openapiSpecification = {
             delete: { tags: ["Favorites"], summary: "Remove a food from favorites", security: bearer, parameters: [{ name: "foodId", in: "path", required: true, schema: { type: "string" } }], responses: { 200: response("Favorite removed or already absent") } },
         },
         "/api/cart/add": {
-            post: { tags: ["Cart"], summary: "Add a quantity of a food to the cart", security: bearer, requestBody: jsonBody({ type: "object", required: ["itemId"], additionalProperties: false, properties: { itemId: { type: "string" }, quantity: { type: "integer", minimum: 1, maximum: 99, default: 1 } } }), responses: { 200: response("Updated cart"), 400: response("Invalid quantity or cart limit exceeded"), 409: response("Insufficient stock") } },
+            post: { tags: ["Cart"], summary: "Add a quantity of a food, size, and optional birthday cake design to the cart", security: bearer, requestBody: jsonBody({ type: "object", required: ["itemId"], additionalProperties: false, properties: { itemId: { type: "string" }, variantId: variantIdSchema, designId: designIdSchema, quantity: { type: "integer", minimum: 1, maximum: 99, default: 1 } } }), responses: { 200: response("Updated cart"), 400: response("Invalid quantity, size, design, or cart limit exceeded"), 409: response("Insufficient stock") } },
         },
         "/api/cart/remove": {
             post: { tags: ["Cart"], summary: "Decrement a cart item", security: bearer, requestBody: jsonBody({ $ref: "#/components/schemas/ItemId" }), responses: { 200: response("Updated cart") } },
@@ -150,7 +157,7 @@ const openapiSpecification = {
             post: { tags: ["Cart"], summary: "Remove every unit of a cart item", security: bearer, requestBody: jsonBody({ $ref: "#/components/schemas/ItemId" }), responses: { 200: response("Updated cart") } },
         },
         "/api/cart/get": {
-            post: { tags: ["Cart"], summary: "Get the current cart", security: bearer, responses: { 200: response("Cart contents") } },
+            post: { tags: ["Cart"], summary: "Get the current cart", security: bearer, responses: { 200: response("Cart quantities keyed by food id, or foodId:variantId for option selections") } },
         },
         "/api/order/config": {
             get: { tags: ["Orders"], summary: "Get delivery and payment configuration", responses: { 200: response("Order configuration") } },
@@ -170,6 +177,7 @@ const openapiSpecification = {
                                 required: ["itemId", "quantity"],
                                 properties: {
                                     itemId: { type: "string" },
+                                    variantId: variantIdSchema,
                                     quantity: { type: "integer", minimum: 1, maximum: 99 },
                                 },
                             },

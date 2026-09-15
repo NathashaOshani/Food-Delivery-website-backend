@@ -13,6 +13,7 @@ const userSchema = new mongoose.Schema({
     name: { type: String, required: true, trim: true, minlength: 2, maxlength: 80 },
     email: { type: String, required: true, unique: true, lowercase: true, trim: true, maxlength: 254 },
     password: { type: String, required: true, select: false },
+    googleId: { type: String, unique: true, sparse: true },
     role: { type: String, enum: ["user", "admin"], default: "user" },
     cartData: { type: Map, of: Number, default: {} },
     emailVerified: { type: Boolean, default: false },

@@ -3,6 +3,10 @@ import mongoose from "mongoose";
 const orderItemSchema = new mongoose.Schema({
     food: { type: mongoose.Schema.Types.ObjectId, ref: "food", required: true },
     name: { type: String, required: true },
+    variantId: String,
+    variantName: String,
+    designId: String,
+    designName: String,
     price: { type: Number, required: true, min: 0 },
     image: { type: String, required: true },
     quantity: { type: Number, required: true, min: 1 },
@@ -15,6 +19,7 @@ const orderSchema = new mongoose.Schema({
     subtotal: { type: Number, min: 0 },
     deliveryFee: { type: Number, min: 0 },
     discount: { type: Number, min: 0, default: 0 },
+    taxAndService: { type: Number, min: 0, default: 0 },
     coupon: { id: mongoose.Schema.Types.ObjectId, code: String, type: String, value: Number },
     couponRedemptionToken: String,
     couponUsageReleased: { type: Boolean, default: false },
