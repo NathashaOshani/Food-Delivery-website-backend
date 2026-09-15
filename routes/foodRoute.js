@@ -10,7 +10,8 @@ import { myFoodReview, listAdminFoodReviews } from "../controllers/reviewControl
 const foodRouter = express.Router();
 const storage = multer.diskStorage({
     destination: (req, file, callback) => {
-        fs.mkdir("./uploads", { recursive: true }, (error) => callback(error, "./uploads/"));
+        const uploadDirectory = process.env.NETLIFY === "true" || process.env.AWS_LAMBDA_FUNCTION_NAME ? "/tmp/uploads" : "./uploads";
+        fs.mkdir(uploadDirectory, { recursive: true }, (error) => callback(error, uploadDirectory));
     },
     filename: (req, file, cb) => {
         const extensions = { "image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp" };

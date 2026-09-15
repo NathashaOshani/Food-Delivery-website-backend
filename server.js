@@ -60,7 +60,7 @@ app.use((error, req, res, next) => {
     res.status(badUpload || badJson ? 400 : 500).json({ success: false, message: badJson ? "Invalid JSON body" : badUpload ? error.message : "Internal server error" });
 });
 
-try {
+if (process.env.NETLIFY !== "true" && !process.env.AWS_LAMBDA_FUNCTION_NAME) try {
     validateEnvironment();
     await connectDB();
     const retryEmails = () => retryOrderNotifications().catch((error) => logger.error("order_email_retry_failed", { error: error.message }));

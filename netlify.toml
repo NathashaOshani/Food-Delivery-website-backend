@@ -1,0 +1,26 @@
+[build]
+  functions = "netlify/functions"
+  publish = "netlify-placeholder"
+
+[functions]
+  node_bundler = "esbuild"
+
+[[redirects]]
+  from = "/api/*"
+  to = "/.netlify/functions/api/api/:splat"
+  status = 200
+
+[[redirects]]
+  from = "/uploads/*"
+  to = "/.netlify/functions/api/uploads/:splat"
+  status = 200
+
+[[redirects]]
+  from = "/health/*"
+  to = "/.netlify/functions/api/health/:splat"
+  status = 200
+
+[[redirects]]
+  from = "/api-docs*"
+  to = "/.netlify/functions/api/api-docs:splat"
+  status = 200
